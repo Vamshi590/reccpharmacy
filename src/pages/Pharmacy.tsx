@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Toaster, toast } from "sonner";
-import logo from "../assets/RECCLOGO.png"
 import MedicineForm from "../components/MedicineForm";
 import MedicineEditModal from "../components/MedicineEditModal";
 import MedicineDispenseHistory from "../components/MedicineDispenseHistory";
@@ -573,7 +572,6 @@ export default function Pharmacy() {
             <header className="bg-white shadow-sm sticky top-0 z-10">
                 <div className="mx-auto px-6 py-4 sm:px-8 lg:px-10 flex justify-between items-center">
                     <div className="flex items-center space-x-4">
-                        <img src={logo} className="h-16" alt="logo" />
                         <div>
                             <h1 className="text-2xl font-medium text-gray-800">Medicines Management</h1>
                             <p className="text-sm text-gray-500">Rishab Eye Care Centres PVT. LTD</p>
@@ -630,24 +628,7 @@ export default function Pharmacy() {
                             </svg>
                             <span>{showAddForm ? 'Hide Form' : 'Add Medicine'}</span>
                         </button>
-                        <button
-                            onClick={() => (window.location.hash = '/dashboard')}
-                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors shadow-sm flex items-center space-x-1.5"
-                        >
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="h-5 w-5"
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
-                            >
-                                <path
-                                    fillRule="evenodd"
-                                    d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z"
-                                    clipRule="evenodd"
-                                />
-                            </svg>
-                            <span>Back</span>
-                        </button>
+                     
                     </div>
                 </div>
             </header>
