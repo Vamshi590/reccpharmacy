@@ -129,6 +129,7 @@ export default function Pharmacy() {
             expiryDate?: string
             rate: number
             amount: number
+            gstamount?: number
         }[]
         totalAmount: number
     } | null>(null)
@@ -508,7 +509,8 @@ export default function Pharmacy() {
                 batchNumber: medicine.batchNumber || '',
                 expiryDate: medicine.expiryDate || '',
                 rate: medicine.price,
-                amount: medicine.totalAmount
+                amount: medicine.totalAmount,
+                gstamount: medicine.gstamount
             }));
             
             // Set receipt data

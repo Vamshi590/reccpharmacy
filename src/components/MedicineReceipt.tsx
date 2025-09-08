@@ -18,6 +18,7 @@ interface MedicalItem {
   expiryDate?: string
   rate: number
   amount: number
+  gstamount?: number
 }
 
 interface SimpleReceiptData {
@@ -125,6 +126,9 @@ const SimpleMedicalReceipt: React.FC<SimpleMedicalReceiptProps> = ({ data }) => 
           <div className="w-16 border-r-2 border-[#000000] p-2 text-center font-bold text-xs">
             Rate
           </div>
+          <div className="w-16 border-r-2 border-[#000000] p-2 text-center font-bold text-xs">
+            GST
+          </div>
           <div className="w-24 p-2 text-center font-bold text-xs">AMOUNT</div>
         </div>
 
@@ -169,6 +173,13 @@ const SimpleMedicalReceipt: React.FC<SimpleMedicalReceiptProps> = ({ data }) => 
             {items.map((item, index) => (
               <div key={index} className="p-2 text-center text-xs border-b border-[#000000]">
                 {item.rate.toFixed(2)}
+              </div>
+            ))}
+          </div>
+          <div className="w-16 border-r-2 border-[#000000]">
+            {items.map((item, index) => (
+              <div key={index} className="p-2 text-center text-xs border-b border-[#000000]">
+                {item?.gstamount?.toFixed(2)}
               </div>
             ))}
           </div>
