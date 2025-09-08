@@ -4,6 +4,7 @@ import MedicineForm from "../components/MedicineForm";
 import MedicineEditModal from "../components/MedicineEditModal";
 import MedicineDispenseHistory from "../components/MedicineDispenseHistory";
 import MedicineTable from "../components/MedicineTable";
+import SimpleMedicalReceipt from "../components/MedicineReceipt";
 import { db } from "../firebase/config";
 import {
     collection,
@@ -105,6 +106,32 @@ export default function Pharmacy() {
     const [totalAmount, setTotalAmount] = useState(0)
     const [loadingPatient, setLoadingPatient] = useState(false)
     const [filteredMedicines, setFilteredMedicines] = useState<Medicine[]>([])
+    
+    // Print receipt related state
+    const [showPrintModal, setShowPrintModal] = useState(false)
+    const [receiptData, setReceiptData] = useState<{
+        businessInfo: {
+            name: string
+            address: string
+            dlNo: string
+            gstin: string
+            phone1: string
+            phone2: string
+        }
+        billNumber: string
+        date: string
+        patientName: string
+        doctorName: string
+        items: {
+            particulars: string
+            qty: number
+            batchNumber?: string
+            expiryDate?: string
+            rate: number
+            amount: number
+        }[]
+        totalAmount: number
+    } | null>(null)
 
     // Define fetchMedicines with useCallback
     const fetchMedicines = useCallback(async () => {
@@ -424,12 +451,17 @@ export default function Pharmacy() {
 
         try {
             setLoading(true);
+            
+            // Generate a unique bill number
+            const billNumber = `BILL-${Date.now().toString().slice(-6)}`;
+            const currentDate = new Date().toLocaleDateString('en-IN');
 
             // Create dispense records for each medicine
             const dispensingPromises = selectedMedicines.map(async (medicine) => {
                 // Create dispensing record
                 const dispensingRef = collection(db, 'dispensingRecords');
-                await addDoc(dispensingRef, {
+                // Create record data object without undefined values
+                const recordData: Record<string, string | number | boolean | Date> = {
                     medicineId: medicine.id,
                     medicineName: medicine.name,
                     batchNumber: medicine.batchNumber || '',
@@ -441,8 +473,16 @@ export default function Pharmacy() {
                     dispensedDate: new Date().toISOString(),
                     patientName: patientName,
                     dispensedBy: dispensedBy || 'Staff',
-                    doctorName: doctorName || ''
-                });
+                    doctorName: doctorName || '',
+                    billNumber: billNumber
+                };
+                
+                // Only add patientId if it exists and is not empty
+                if (patientId && patientId.trim() !== '') {
+                    recordData.patientId = patientId;
+                }
+                
+                await addDoc(dispensingRef, recordData);
 
                 // Update medicine quantity
                 const medicineRef = doc(db, 'medicines', medicine.id);
@@ -461,6 +501,34 @@ export default function Pharmacy() {
 
             await Promise.all(dispensingPromises);
 
+            // Prepare receipt data
+            const receiptItems = selectedMedicines.map(medicine => ({
+                particulars: medicine.name,
+                qty: medicine.quantity,
+                batchNumber: medicine.batchNumber || '',
+                expiryDate: medicine.expiryDate || '',
+                rate: medicine.price,
+                amount: medicine.totalAmount
+            }));
+            
+            // Set receipt data
+            setReceiptData({
+                businessInfo: {
+                    name: "RISHAB PHARMACY",
+                    address: "D.NO. 35-12/G1 AND G2, SHOP NO.2, GROUND FLOOR, G.K COLONY, SAINIKPURI, MALKAJGIRI, TELANGANA",
+                    dlNo: "DL-12345",
+                    gstin: "GSTIN-12345678",
+                    phone1: "9876543210",
+                    phone2: "1234567890"
+                },
+                billNumber: billNumber,
+                date: currentDate,
+                patientName: patientName,
+                doctorName: doctorName || 'Self',
+                items: receiptItems,
+                totalAmount: totalAmount
+            });
+
             // Refresh medicines list
             fetchMedicines();
 
@@ -474,17 +542,9 @@ export default function Pharmacy() {
 
             toast.success('Medicines dispensed successfully!');
 
-            // Handle printing if requested
-            if (printReceipt && medicalReceiptRef.current) {
-                // Implement printing logic here
-                const printWindow = window.open('', '_blank');
-                if (printWindow) {
-                    printWindow.document.write(medicalReceiptRef.current.innerHTML);
-                    printWindow.document.close();
-                    printWindow.focus();
-                    printWindow.print();
-                    printWindow.close();
-                }
+            // Show print confirmation modal if requested
+            if (printReceipt) {
+                setShowPrintModal(true);
             }
 
         } catch (err) {
@@ -494,6 +554,41 @@ export default function Pharmacy() {
         } finally {
             setLoading(false);
         }
+    };
+
+    // Handle printing receipt
+    const handlePrintReceipt = () => {
+        if (medicalReceiptRef.current && receiptData) {
+            // Create a new window for printing
+            const printWindow = window.open('', '_blank');
+            if (printWindow) {
+                // Write the receipt content to the new window
+                printWindow.document.write(`
+                    <html>
+                        <head>
+                            <title>Medicine Receipt</title>
+                            <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+                        </head>
+                        <body>
+                            ${medicalReceiptRef.current.innerHTML}
+                        </body>
+                    </html>
+                `);
+                printWindow.document.close();
+                
+                // Wait for resources to load then print
+                printWindow.onload = () => {
+                    printWindow.focus();
+                    printWindow.print();
+                    printWindow.onafterprint = () => {
+                        printWindow.close();
+                    };
+                };
+            }
+        }
+        
+        // Close the print modal
+        setShowPrintModal(false);
     };
 
     // Handle page change for pagination
@@ -1093,6 +1188,16 @@ export default function Pharmacy() {
                                         >
                                             Save
                                         </button>
+                                        <button
+                                            className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-green-300 flex items-center"
+                                            onClick={() => handleSaveDispense(true)}
+                                            disabled={loading}
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                                            </svg>
+                                            Save & Print
+                                        </button>
                                     </div>
                                 </div>
                             )}
@@ -1294,6 +1399,58 @@ export default function Pharmacy() {
                     onSave={handleUpdateMedicine}
                 />
             )}
+            
+            {/* Print Confirmation Modal */}
+            {showPrintModal && receiptData && (
+                <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto">
+                    <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                        <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                            <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                                <div className="sm:flex sm:items-start">
+                                    <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                                        </svg>
+                                    </div>
+                                    <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                                        <h3 className="text-lg leading-6 font-medium text-gray-900">Print Receipt</h3>
+                                        <div className="mt-2">
+                                            <p className="text-sm text-gray-500">
+                                                Would you like to print the receipt for this transaction?
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                                <button
+                                    type="button"
+                                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
+                                    onClick={() => handlePrintReceipt()}
+                                >
+                                    Print
+                                </button>
+                                <button
+                                    type="button"
+                                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                                    onClick={() => setShowPrintModal(false)}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {/* Hidden Receipt for Printing */}
+            <div className="hidden">
+                <div ref={medicalReceiptRef}>
+                    {receiptData && (
+                        <SimpleMedicalReceipt data={receiptData} />
+                    )}
+                </div>
+            </div>
 
             <footer className="bg-white border-t border-gray-200 mt-auto py-6">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
