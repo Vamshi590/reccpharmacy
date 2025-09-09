@@ -29,6 +29,7 @@ interface SimpleReceiptData {
   doctorName: string
   items: MedicalItem[]
   totalAmount: number
+  paymentMode?: string
 }
 
 interface SimpleMedicalReceiptProps {
@@ -36,7 +37,7 @@ interface SimpleMedicalReceiptProps {
 }
 
 const SimpleMedicalReceipt: React.FC<SimpleMedicalReceiptProps> = ({ data }) => {
-  const { businessInfo, billNumber, date, patientName, doctorName, items, totalAmount } = data
+  const { businessInfo, billNumber, date, patientName, doctorName, items, totalAmount, paymentMode } = data
 
   return (
     <div className="w-[210mm] h-[297mm] mx-auto bg-[#ffffff] border-2 border-[#000000] print:border-0 print:shadow-none p-4">
@@ -49,18 +50,16 @@ const SimpleMedicalReceipt: React.FC<SimpleMedicalReceiptProps> = ({ data }) => 
           </div>
         </div>
         <div className="text-[#000000] px-3 py-1 rounded">
-          <span className="font-bold text-sm">CASH BILL</span>
+          <span className="font-bold text-sm">{paymentMode || 'CASH'} BILL</span>
         </div>
         <div className="text-right text-xs">
           <div>Cell: {businessInfo.phone1}</div>
-          <div>{businessInfo.phone2}</div>
         </div>
       </div>
 
       {/* Business Name */}
       <div className="text-center mb-2">
         <h1 className="text-2xl font-bold tracking-wider">{businessInfo.name}</h1>
-        <p className="text-sm font-bold">WHOLESALE & RETAIL</p>
       </div>
 
       {/* Address */}
@@ -207,10 +206,7 @@ const SimpleMedicalReceipt: React.FC<SimpleMedicalReceiptProps> = ({ data }) => 
       {/* Footer */}
       <div className="flex justify-between items-end mt-4">
         <div className="text-sm">
-          <span>Goods once Sold Can not be taken back</span>
-          <div className="mt-2">
-            <span className="text-xs">E & O.E</span>
-          </div>
+          <span>Goods once sold can not be taken back</span>
         </div>
         <div className="text-right">
           <div className="border-b border-[#000000] w-32 h-8 flex items-end justify-center">

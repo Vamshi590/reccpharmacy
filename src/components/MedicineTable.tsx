@@ -21,13 +21,15 @@ interface MedicineTableProps {
     onUpdateStatus: (id: string, status: 'available' | 'completed' | 'out_of_stock') => Promise<void>
     onAddToDispense?: (medicine: Medicine, quantity: number) => void
     showDispenseControls?: boolean
+    onPrint?: () => void
 }
 
 const MedicineTable: React.FC<MedicineTableProps> = ({
     medicines,
     onEdit,
     onAddToDispense,
-    showDispenseControls = false
+    showDispenseControls = false,
+    onPrint
 }) => {
     const [quantities, setQuantities] = React.useState<Record<string, number>>({})
     // Function to format date
@@ -70,9 +72,150 @@ const MedicineTable: React.FC<MedicineTableProps> = ({
         }
     }
 
+    // Print functionality helper
+    const handlePrint = () => {
+        if (onPrint) {
+            onPrint();
+        } else {
+            // Default print functionality if no onPrint prop is provided
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+                alert('Please allow pop-ups to print the inventory.');
+                return;
+            }
+            
+            // Create complete HTML document for printing
+            const printDocument = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Medicine Inventory</title>
+                    <style>
+                        body { 
+                            font-family: Arial, sans-serif; 
+                            margin: 20px; 
+                        }
+                        table { 
+                            width: 100%; 
+                            border-collapse: collapse; 
+                            margin-bottom: 20px;
+                        }
+                        th, td { 
+                            padding: 8px; 
+                            text-align: left; 
+                            border-bottom: 1px solid #ddd; 
+                        }
+                        th { 
+                            background-color: #f2f2f2; 
+                            font-weight: bold;
+                        }
+                        .print-header { 
+                            text-align: center; 
+                            margin-bottom: 20px; 
+                        }
+                        .print-header h1 { 
+                            margin: 0; 
+                            color: #2563eb;
+                        }
+                        .print-date { 
+                            text-align: right; 
+                            margin-bottom: 20px; 
+                            font-style: italic;
+                        }
+                        .expired { 
+                            color: #e53e3e; 
+                            font-weight: bold;
+                        }
+                        .expiring-soon { 
+                            color: #dd6b20; 
+                            font-weight: bold;
+                        }
+                        .status-available {
+                            color: green;
+                        }
+                        .status-out_of_stock {
+                            color: red;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="print-header">
+                        <h1>Medicine Inventory</h1>
+                    </div>
+                    <div class="print-date">
+                        <p>Date: ${new Date().toLocaleDateString('en-IN')}</p>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Batch No.</th>
+                                <th>HSN Code</th>
+                                <th>Expiry Date</th>
+                                <th>Quantity</th>
+                                <th>Price</th>
+                                <th>GST %</th>
+                                <th>GST Amount</th>
+                                <th>Total Amount</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${medicines.map(medicine => `
+                                <tr>
+                                    <td>${medicine.name}</td>
+                                    <td>${medicine.batchNumber}</td>
+                                    <td>${medicine.hsncode || '-'}</td>
+                                    <td class="${isExpired(medicine.expiryDate) ? 'expired' : isExpiringSoon(medicine.expiryDate) ? 'expiring-soon' : ''}">
+                                        ${formatDate(medicine.expiryDate)}
+                                        ${isExpired(medicine.expiryDate) ? ' (Expired)' : isExpiringSoon(medicine.expiryDate) ? ' (Expiring Soon)' : ''}
+                                    </td>
+                                    <td>${medicine.quantity}</td>
+                                    <td>₹${medicine.price.toFixed(2)}</td>
+                                    <td>${medicine.gstpercentage || '-'}</td>
+                                    <td>₹${medicine.gstamount?.toFixed(2) || '-'}</td>
+                                    <td>₹${medicine.totalAmount?.toFixed(2) || '-'}</td>
+                                    <td class="status-${medicine.status}">
+                                        ${medicine.status === 'available' ? 'Available' : 
+                                          medicine.status === 'completed' ? 'Completed' : 'Out of Stock'}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </body>
+                </html>
+            `;
+            
+            // Write to the new window and print
+            printWindow.document.write(printDocument);
+            printWindow.document.close();
+            
+            // Add a small delay to ensure content is fully loaded before printing
+            setTimeout(() => {
+                printWindow.focus();
+                printWindow.print();
+                // Don't close the window automatically so user can see if there are any issues
+            }, 500);
+        }
+    };
+
     return (
-        <table className="min-w-full divide-y divide-gray-200 border border-gray-200">
-            <thead className="bg-gray-50">
+        <div>
+            <div className="flex justify-between items-center mb-4">
+                <div></div>
+                <button
+                    onClick={handlePrint}
+                    className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors shadow-sm flex items-center space-x-1.5"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v3a2 2 0 002 2h1v2a2 2 0 002 2h6a2 2 0 002-2v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clipRule="evenodd" />
+                    </svg>
+                    <span>Print Inventory</span>
+                </button>
+            </div>
+            <table className="min-w-full divide-y divide-gray-200 border border-gray-200">
+                <thead className="bg-gray-50">
                 <tr>
                     <th
                         scope="col"
@@ -311,6 +454,7 @@ const MedicineTable: React.FC<MedicineTableProps> = ({
                 ))}
             </tbody>
         </table>
+    </div>
     )
 }
 

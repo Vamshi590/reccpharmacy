@@ -18,8 +18,10 @@ import {
     limit,
     startAfter,
     getDoc,
-    serverTimestamp
+    serverTimestamp,
+    where
 } from "firebase/firestore";
+import EditableCombobox from "../components/EditableComboBox";
 
 interface Medicine {
     id: string
@@ -59,7 +61,7 @@ interface MedicineDispenseRecord {
 
 export default function Pharmacy() {
 
-    const [activeTab, setActiveTab] = useState<'inventory' | 'dispensing-history'>('inventory');
+    const [activeTab, setActiveTab] = useState<'inventory' | 'dispensing-history' | 'analytics'>('inventory');
     const [showAddForm, setShowAddForm] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -83,6 +85,26 @@ export default function Pharmacy() {
     const [pageSize] = useState(10)
     const [totalCount, setTotalCount] = useState(0)
     const [doctorName, setDoctorName] = useState('')
+    
+    // Analytics related state
+    const [analyticsTimeRange, setAnalyticsTimeRange] = useState<'today' | 'week' | 'month' | 'custom'>('today')
+    const [analyticsStartDate, setAnalyticsStartDate] = useState<string>(() => {
+        const today = new Date()
+        return today.toISOString().split('T')[0] // Format as YYYY-MM-DD
+    })
+    const [analyticsEndDate, setAnalyticsEndDate] = useState<string>(() => {
+        const today = new Date()
+        return today.toISOString().split('T')[0] // Format as YYYY-MM-DD
+    })
+    const [analyticsData, setAnalyticsData] = useState<{
+        totalAmount: number
+        paymentModeBreakdown: {
+            mode: string
+            count: number
+            amount: number
+        }[]
+    }>({ totalAmount: 0, paymentModeBreakdown: [] })
+    const [loadingAnalytics, setLoadingAnalytics] = useState(false)
 
     // Dispense form state
     const [showDispenseForm, setShowDispenseForm] = useState(false)
@@ -90,6 +112,7 @@ export default function Pharmacy() {
     const [patientId, setPatientId] = useState('')
     const [patientName, setPatientName] = useState('')
     const [dispensedBy, setDispensedBy] = useState('')
+    const [paymentMode, setPaymentMode] = useState<'CASH' | 'UPI' | 'BOTH CASH/UPI' | 'AROGYAA SREE' | 'ECHS' | 'ZERO FEE'>('CASH')
     const [selectedMedicines, setSelectedMedicines] = useState<
         {
             totalAmount: number;
@@ -106,7 +129,7 @@ export default function Pharmacy() {
     const [totalAmount, setTotalAmount] = useState(0)
     const [loadingPatient, setLoadingPatient] = useState(false)
     const [filteredMedicines, setFilteredMedicines] = useState<Medicine[]>([])
-    
+
     // Print receipt related state
     const [showPrintModal, setShowPrintModal] = useState(false)
     const [receiptData, setReceiptData] = useState<{
@@ -132,7 +155,107 @@ export default function Pharmacy() {
             gstamount?: number
         }[]
         totalAmount: number
+        paymentMode?: string
     } | null>(null)
+
+    // Function to fetch analytics data based on time range
+    const fetchAnalyticsData = useCallback(async () => {
+        try {
+            setLoadingAnalytics(true);
+            
+            // Determine date range based on selected time range
+            let startDate = new Date();
+            let endDate = new Date();
+            
+            switch (analyticsTimeRange) {
+                case 'today':
+                    // Start date is beginning of today
+                    startDate.setHours(0, 0, 0, 0);
+                    break;
+                case 'week':
+                    // Start date is 7 days ago
+                    startDate.setDate(startDate.getDate() - 7);
+                    startDate.setHours(0, 0, 0, 0);
+                    break;
+                case 'month':
+                    // Start date is 30 days ago
+                    startDate.setDate(startDate.getDate() - 30);
+                    startDate.setHours(0, 0, 0, 0);
+                    break;
+                case 'custom':
+                    // Use the custom date range
+                    startDate = new Date(analyticsStartDate);
+                    startDate.setHours(0, 0, 0, 0);
+                    endDate = new Date(analyticsEndDate);
+                    endDate.setHours(23, 59, 59, 999);
+                    break;
+            }
+            
+            // Convert dates to ISO strings for Firestore query
+            const startDateISO = startDate.toISOString();
+            const endDateISO = endDate.toISOString();
+            
+            // Query dispensing records within the date range
+            const recordsRef = collection(db, 'dispensingRecords');
+            const q = query(
+                recordsRef,
+                orderBy('dispensedDate'),
+                where('dispensedDate', '>=', startDateISO),
+                where('dispensedDate', '<=', endDateISO)
+            );
+            
+            const querySnapshot = await getDocs(q);
+            
+            // Initialize analytics data
+            let totalAmount = 0;
+            const paymentModeMap = new Map<string, { count: number, amount: number }>();
+            
+            // Process each record
+            querySnapshot.forEach((doc) => {
+                const record = doc.data() as MedicineDispenseRecord & { paymentMode?: string, totalAmount: number };
+                
+                // Add to total amount
+                totalAmount += record.totalAmount;
+                
+                // Group by payment mode
+                const paymentMode = record.paymentMode || 'CASH'; // Default to CASH if not specified
+                
+                if (paymentModeMap.has(paymentMode)) {
+                    const existing = paymentModeMap.get(paymentMode)!;
+                    existing.count += 1;
+                    existing.amount += record.totalAmount;
+                    paymentModeMap.set(paymentMode, existing);
+                } else {
+                    paymentModeMap.set(paymentMode, {
+                        count: 1,
+                        amount: record.totalAmount
+                    });
+                }
+            });
+            
+            // Convert map to array for state
+            const paymentModeBreakdown = Array.from(paymentModeMap.entries()).map(([mode, data]) => ({
+                mode,
+                count: data.count,
+                amount: data.amount
+            }));
+            
+            // Sort by amount in descending order
+            paymentModeBreakdown.sort((a, b) => b.amount - a.amount);
+            
+            // Update analytics data state
+            setAnalyticsData({
+                totalAmount,
+                paymentModeBreakdown
+            });
+            
+        } catch (err) {
+            console.error('Error fetching analytics data:', err);
+            toast.error('Failed to load analytics data');
+        } finally {
+            setLoadingAnalytics(false);
+        }
+    }, [analyticsTimeRange, analyticsStartDate, analyticsEndDate]);
 
     // Define fetchMedicines with useCallback
     const fetchMedicines = useCallback(async () => {
@@ -229,6 +352,13 @@ export default function Pharmacy() {
     useEffect(() => {
         filterMedicines();
     }, [filterMedicines]);
+    
+    // Fetch analytics data when tab changes to 'analytics'
+    useEffect(() => {
+        if (activeTab === 'analytics') {
+            fetchAnalyticsData();
+        }
+    }, [activeTab, fetchAnalyticsData]);
 
     // Calculate total amount when selected medicines change
     useEffect(() => {
@@ -386,6 +516,7 @@ export default function Pharmacy() {
         setPatientName('');
         setDoctorName('');
         setDispensedBy('');
+        setPaymentMode('CASH');
         setSelectedMedicines([]);
         setTotalAmount(0);
     };
@@ -452,10 +583,16 @@ export default function Pharmacy() {
 
         try {
             setLoading(true);
-            
+
             // Generate a unique bill number
             const billNumber = `BILL-${Date.now().toString().slice(-6)}`;
             const currentDate = new Date().toLocaleDateString('en-IN');
+
+            // Check if payment mode is one of the special types that require zero amount
+            const isSpecialPaymentMode = ['AROGYAA SREE', 'ECHS', 'ZERO FEE'].includes(paymentMode);
+
+            // If it's a special payment mode, we'll set the total amount to zero
+            // but still keep track of the original amount for record-keeping
 
             // Create dispense records for each medicine
             const dispensingPromises = selectedMedicines.map(async (medicine) => {
@@ -470,19 +607,20 @@ export default function Pharmacy() {
                     price: medicine.price,
                     gstamount: medicine.gstamount || 0,
                     gstpercentage: medicine.gstpercentage || 0,
-                    totalAmount: medicine.totalAmount,
+                    totalAmount: isSpecialPaymentMode ? 0 : medicine.totalAmount,
                     dispensedDate: new Date().toISOString(),
                     patientName: patientName,
                     dispensedBy: dispensedBy || 'Staff',
                     doctorName: doctorName || '',
-                    billNumber: billNumber
+                    billNumber: billNumber,
+                    paymentMode: paymentMode
                 };
-                
+
                 // Only add patientId if it exists and is not empty
                 if (patientId && patientId.trim() !== '') {
                     recordData.patientId = patientId;
                 }
-                
+
                 await addDoc(dispensingRef, recordData);
 
                 // Update medicine quantity
@@ -512,23 +650,24 @@ export default function Pharmacy() {
                 amount: medicine.totalAmount,
                 gstamount: medicine.gstamount
             }));
-            
+
             // Set receipt data
             setReceiptData({
                 businessInfo: {
                     name: "RISHAB PHARMACY",
                     address: "D.NO. 35-12/G1 AND G2, SHOP NO.2, GROUND FLOOR, G.K COLONY, SAINIKPURI, MALKAJGIRI, TELANGANA",
-                    dlNo: "DL-12345",
-                    gstin: "GSTIN-12345678",
-                    phone1: "9876543210",
-                    phone2: "1234567890"
+                    dlNo: "242/RR2/AP/2010",
+                    gstin: "GSTIN-36AAXFR0005R1ZL",
+                    phone1: "9000244545",
+                    phone2: ""
                 },
                 billNumber: billNumber,
                 date: currentDate,
                 patientName: patientName,
                 doctorName: doctorName || 'Self',
                 items: receiptItems,
-                totalAmount: totalAmount
+                totalAmount: isSpecialPaymentMode ? 0 : totalAmount,
+                paymentMode: paymentMode
             });
 
             // Refresh medicines list
@@ -541,6 +680,7 @@ export default function Pharmacy() {
             setPatientName('');
             setDoctorName('');
             setDispensedBy('');
+            setPaymentMode('CASH');
 
             toast.success('Medicines dispensed successfully!');
 
@@ -577,7 +717,7 @@ export default function Pharmacy() {
                     </html>
                 `);
                 printWindow.document.close();
-                
+
                 // Wait for resources to load then print
                 printWindow.onload = () => {
                     printWindow.focus();
@@ -588,7 +728,7 @@ export default function Pharmacy() {
                 };
             }
         }
-        
+
         // Close the print modal
         setShowPrintModal(false);
     };
@@ -663,6 +803,11 @@ export default function Pharmacy() {
         setIsModalOpen(true);
     };
 
+
+
+    const doctorOptions = ['Self', 'Dr. Rajalingam V', 'Dr. Rita Bahadur Shah', 'Dr. Shashikala', 'Dr. Uma'];
+
+    const dispensedbyOptions = ['Divya gattu']
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
             <Toaster />
@@ -705,6 +850,12 @@ export default function Pharmacy() {
                         >
                             Dispensing History
                         </button>
+                        <button
+                            onClick={() => setActiveTab('analytics')}
+                            className={`px-4 py-2 rounded-md transition-colors ${activeTab === 'analytics' ? 'bg-white shadow-sm text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-200'}`}
+                        >
+                            Analytics
+                        </button>
                     </div>
                     <div className="flex items-center space-x-3">
                         <button
@@ -725,7 +876,7 @@ export default function Pharmacy() {
                             </svg>
                             <span>{showAddForm ? 'Hide Form' : 'Add Medicine'}</span>
                         </button>
-                     
+
                     </div>
                 </div>
             </header>
@@ -803,7 +954,172 @@ export default function Pharmacy() {
                 )}
 
                 <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
-                    {activeTab === 'inventory' ? (
+                    {activeTab === 'analytics' ? (
+                        // Analytics Tab Content
+                        <>
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-xl font-medium text-gray-800 flex items-center">
+                                    <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        className="h-6 w-6 mr-2 text-blue-500"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                    >
+                                        <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                                        />
+                                    </svg>
+                                    Sales Analytics
+                                </h2>
+                            </div>
+
+                            {/* Time Range Selection */}
+                            <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6">
+                                <h3 className="text-lg font-medium text-gray-800 mb-4">Select Time Range</h3>
+                                <div className="flex flex-wrap gap-4">
+                                    <div className="flex space-x-2">
+                                        <button
+                                            onClick={() => {
+                                                setAnalyticsTimeRange('today');
+                                                fetchAnalyticsData();
+                                            }}
+                                            className={`px-4 py-2 rounded-md transition-colors ${analyticsTimeRange === 'today' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        >
+                                            Today
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setAnalyticsTimeRange('week');
+                                                fetchAnalyticsData();
+                                            }}
+                                            className={`px-4 py-2 rounded-md transition-colors ${analyticsTimeRange === 'week' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        >
+                                            Last 7 Days
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setAnalyticsTimeRange('month');
+                                                fetchAnalyticsData();
+                                            }}
+                                            className={`px-4 py-2 rounded-md transition-colors ${analyticsTimeRange === 'month' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        >
+                                            Last 30 Days
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setAnalyticsTimeRange('custom');
+                                            }}
+                                            className={`px-4 py-2 rounded-md transition-colors ${analyticsTimeRange === 'custom' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                        >
+                                            Custom Range
+                                        </button>
+                                    </div>
+
+                                    {analyticsTimeRange === 'custom' && (
+                                        <div className="flex items-center space-x-4 mt-4">
+                                            <div>
+                                                <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-1">
+                                                    Start Date
+                                                </label>
+                                                <input
+                                                    type="date"
+                                                    id="startDate"
+                                                    value={analyticsStartDate}
+                                                    onChange={(e) => setAnalyticsStartDate(e.target.value)}
+                                                    className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-1">
+                                                    End Date
+                                                </label>
+                                                <input
+                                                    type="date"
+                                                    id="endDate"
+                                                    value={analyticsEndDate}
+                                                    onChange={(e) => setAnalyticsEndDate(e.target.value)}
+                                                    className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                />
+                                            </div>
+                                            <div className="self-end">
+                                                <button
+                                                    onClick={fetchAnalyticsData}
+                                                    className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors shadow-sm"
+                                                >
+                                                    Apply
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Analytics Data Display */}
+                            {loadingAnalytics ? (
+                                <div className="flex justify-center items-center h-64">
+                                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Total Sales Card */}
+                                    <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                        <h3 className="text-lg font-medium text-gray-800 mb-4">Total Sales</h3>
+                                        <div className="text-3xl font-bold text-blue-600">₹{analyticsData.totalAmount.toFixed(2)}</div>
+                                        <p className="text-sm text-gray-500 mt-2">
+                                            {analyticsTimeRange === 'today' ? 'Today' : 
+                                             analyticsTimeRange === 'week' ? 'Last 7 days' : 
+                                             analyticsTimeRange === 'month' ? 'Last 30 days' : 'Custom range'}
+                                        </p>
+                                    </div>
+
+                                    {/* Payment Mode Breakdown */}
+                                    <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                        <h3 className="text-lg font-medium text-gray-800 mb-4">Payment Mode Breakdown</h3>
+                                        {analyticsData.paymentModeBreakdown.length > 0 ? (
+                                            <div className="overflow-x-auto">
+                                                <table className="min-w-full divide-y divide-gray-200">
+                                                    <thead className="bg-gray-50">
+                                                        <tr>
+                                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                                Payment Mode
+                                                            </th>
+                                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                                Count
+                                                            </th>
+                                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                                Amount
+                                                            </th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="bg-white divide-y divide-gray-200">
+                                                        {analyticsData.paymentModeBreakdown.map((item, index) => (
+                                                            <tr key={index}>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                                    {item.mode}
+                                                                </td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                                    {item.count}
+                                                                </td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                                    ₹{item.amount.toFixed(2)}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        ) : (
+                                            <p className="text-gray-500">No data available for the selected time range.</p>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    ) : activeTab === 'inventory' ? (
                         // Inventory Tab Content
                         <>
                             <div className="flex justify-between items-center mb-6">
@@ -1034,16 +1350,15 @@ export default function Pharmacy() {
                                                     >
                                                         Doctor Name
                                                     </label>
-                                                    <input
-                                                        type="text"
+                                                    <EditableCombobox
                                                         id="doctorName"
-                                                        value={doctorName || ''}
-                                                        onChange={(e) => {
-                                                            setDoctorName(e.target.value)
-                                                        }}
-                                                        className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-                                                        placeholder="Enter doctor name (optional)"
+                                                        name="doctorName"
+                                                        value={doctorName}
+                                                        onChange={(e) => { setDoctorName(e.target.value) }}
+                                                        options={doctorOptions}
+                                                        placeholder={`Enter doctor name`}
                                                     />
+
                                                 </div>
 
                                                 {/* Dispensed By - For both types */}
@@ -1054,15 +1369,39 @@ export default function Pharmacy() {
                                                     >
                                                         Dispensed By
                                                     </label>
-                                                    <input
-                                                        type="text"
+                                                    <EditableCombobox
                                                         id="dispensedBy"
+                                                        name="dispensedBy"
                                                         value={dispensedBy}
-                                                        onChange={(e) => setDispensedBy(e.target.value)}
-                                                        className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-                                                        placeholder="Enter dispenser name"
+                                                        onChange={(e) => { setDispensedBy(e.target.value) }}
+                                                        options={dispensedbyOptions}
+                                                        placeholder={`Enter dispenser name`}
                                                     />
                                                 </div>
+
+                                                {/* Mode of Payment - For both types */}
+                                                <div>
+                                                    <label
+                                                        htmlFor="paymentMode"
+                                                        className="block text-sm font-medium text-gray-700 mb-1"
+                                                    >
+                                                        Mode of Payment
+                                                    </label>
+                                                    <select
+                                                        id="paymentMode"
+                                                        value={paymentMode}
+                                                        onChange={(e) => setPaymentMode(e.target.value as 'CASH' | 'UPI' | 'BOTH CASH/UPI' | 'AROGYAA SREE' | 'ECHS' | 'ZERO FEE')}
+                                                        className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
+                                                    >
+                                                        <option value="CASH">CASH</option>
+                                                        <option value="UPI">UPI</option>
+                                                        <option value="BOTH CASH/UPI">BOTH CASH/UPI</option>
+                                                        <option value="AROGYAA SREE">AROGYAA SREE</option>
+                                                        <option value="ECHS">ECHS</option>
+                                                        <option value="ZERO FEE">ZERO FEE</option>
+                                                    </select>
+                                                </div>
+
                                             </>
                                         )}
                                     </div>
@@ -1281,6 +1620,161 @@ export default function Pharmacy() {
                                             onDelete={handleDeleteMedicine}
                                             onUpdateStatus={handleUpdateStatus}
                                             onAddToDispense={addMedicineToDispense}
+                                            onPrint={() => {
+                                                // Create a new window for printing
+                                                const printWindow = window.open('', '_blank');
+                                                if (!printWindow) {
+                                                    alert('Please allow pop-ups to print the inventory.');
+                                                    return;
+                                                }
+                                                
+                                                // Create complete HTML document for printing
+                                                const printDocument = `
+                                                    <!DOCTYPE html>
+                                                    <html>
+                                                    <head>
+                                                        <title>RECC PHARMACY - Medicine Inventory</title>
+                                                        <style>
+                                                            body { 
+                                                                font-family: Arial, sans-serif; 
+                                                                margin: 20px; 
+                                                            }
+                                                            table { 
+                                                                width: 100%; 
+                                                                border-collapse: collapse; 
+                                                                margin-bottom: 20px;
+                                                            }
+                                                            th, td { 
+                                                                padding: 8px; 
+                                                                text-align: left; 
+                                                                border: 1px solid #ddd; 
+                                                            }
+                                                            th { 
+                                                                background-color: #f2f2f2; 
+                                                                font-weight: bold;
+                                                            }
+                                                            .print-header { 
+                                                                text-align: center; 
+                                                                margin-bottom: 20px; 
+                                                            }
+                                                            .print-header h1 { 
+                                                                margin: 0; 
+                                                                color: #2563eb;
+                                                            }
+                                                            .print-date { 
+                                                                text-align: right; 
+                                                                margin-bottom: 20px; 
+                                                                font-style: italic;
+                                                            }
+                                                            .expired { 
+                                                                color: #e53e3e; 
+                                                                font-weight: bold;
+                                                            }
+                                                            .expiring-soon { 
+                                                                color: #dd6b20; 
+                                                                font-weight: bold;
+                                                            }
+                                                            .status-available {
+                                                                color: green;
+                                                            }
+                                                            .status-out_of_stock {
+                                                                color: red;
+                                                            }
+                                                            .footer {
+                                                                margin-top: 30px;
+                                                                text-align: center;
+                                                                font-size: 12px;
+                                                                color: #666;
+                                                            }
+                                                        </style>
+                                                    </head>
+                                                    <body>
+                                                        <div class="print-header">
+                                                            <h1>RECC PHARMACY - Medicine Inventory</h1>
+                                                        </div>
+                                                        <div class="print-date">
+                                                            <p>Date: ${new Date().toLocaleDateString('en-IN')}</p>
+                                                        </div>
+                                                        <table>
+                                                            <thead>
+                                                                <tr>
+                                                                    <th>Name</th>
+                                                                    <th>Batch No.</th>
+                                                                    <th>HSN Code</th>
+                                                                    <th>Expiry Date</th>
+                                                                    <th>Quantity</th>
+                                                                    <th>Price</th>
+                                                                    <th>GST %</th>
+                                                                    <th>GST Amount</th>
+                                                                    <th>Total Amount</th>
+                                                                    <th>Status</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                ${filteredMedicines.map(medicine => {
+                                                                    const isExpiringSoon = (expiryDate: string | number | Date) => {
+                                                                        const today = new Date();
+                                                                        const expiry = new Date(expiryDate);
+                                                                        const diffTime = expiry.getTime() - today.getTime();
+                                                                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                                                        return diffDays <= 90 && diffDays > 0;
+                                                                    };
+                                                                    
+                                                                    const isExpired = (expiryDate: string | number | Date) => {
+                                                                        const today = new Date();
+                                                                        const expiry = new Date(expiryDate);
+                                                                        return expiry < today;
+                                                                    };
+                                                                    
+                                                                    const formatDate = (dateString: string | number | Date) => {
+                                                                        const date = new Date(dateString);
+                                                                        return date.toLocaleDateString('en-IN', {
+                                                                            year: 'numeric',
+                                                                            month: 'short',
+                                                                            day: 'numeric'
+                                                                        });
+                                                                    };
+                                                                    
+                                                                    return `
+                                                                    <tr>
+                                                                        <td>${medicine.name}</td>
+                                                                        <td>${medicine.batchNumber}</td>
+                                                                        <td>${medicine.hsncode || '-'}</td>
+                                                                        <td class="${isExpired(medicine.expiryDate) ? 'expired' : isExpiringSoon(medicine.expiryDate) ? 'expiring-soon' : ''}">
+                                                                            ${formatDate(medicine.expiryDate)}
+                                                                            ${isExpired(medicine.expiryDate) ? ' (Expired)' : isExpiringSoon(medicine.expiryDate) ? ' (Expiring Soon)' : ''}
+                                                                        </td>
+                                                                        <td>${medicine.quantity}</td>
+                                                                        <td>₹${medicine.price.toFixed(2)}</td>
+                                                                        <td>${medicine.gstpercentage || '-'}</td>
+                                                                        <td>₹${medicine.gstamount?.toFixed(2) || '-'}</td>
+                                                                        <td>₹${medicine.totalAmount?.toFixed(2) || '-'}</td>
+                                                                        <td class="status-${medicine.status}">
+                                                                            ${medicine.status === 'available' ? 'Available' : 
+                                                                              medicine.status === 'completed' ? 'Completed' : 'Out of Stock'}
+                                                                        </td>
+                                                                    </tr>
+                                                                    `;
+                                                                }).join('')}
+                                                            </tbody>
+                                                        </table>
+                                                        <div class="footer">
+                                                            <p>© ${new Date().getFullYear()} RECC PHARMACY. All rights reserved.</p>
+                                                        </div>
+                                                    </body>
+                                                    </html>
+                                                `;
+                                                
+                                                // Write to the new window and print
+                                                printWindow.document.write(printDocument);
+                                                printWindow.document.close();
+                                                
+                                                // Add a small delay to ensure content is fully loaded before printing
+                                                setTimeout(() => {
+                                                    printWindow.focus();
+                                                    printWindow.print();
+                                                }, 1000);
+                                            }}
                                             showDispenseControls={showDispenseForm}
                                         />
                                     </div>
@@ -1401,7 +1895,7 @@ export default function Pharmacy() {
                     onSave={handleUpdateMedicine}
                 />
             )}
-            
+
             {/* Print Confirmation Modal */}
             {showPrintModal && receiptData && (
                 <div className="fixed inset-0 z-50 bg-black/50 overflow-y-auto">
@@ -1444,7 +1938,7 @@ export default function Pharmacy() {
                     </div>
                 </div>
             )}
-            
+
             {/* Hidden Receipt for Printing */}
             <div className="hidden">
                 <div ref={medicalReceiptRef}>
